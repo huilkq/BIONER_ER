@@ -2,15 +2,15 @@ import os
 from typing import List
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from transformers import BertTokenizerFast, AutoTokenizer, BertTokenizer
 from datasets import load_dataset, load_metric, list_datasets
-from BioBERT.config.model_config import model_checkpoint
-from BioBERT.processors.utils_ner import BioNERProcessor
+from BIONER_ER.config.model_config import model_checkpoint, FILE_NAME
+from BIONER_ER.processors.utils_ner import BioNERProcessor
 import pandas as pd
 import numpy as np
 
-from BioBERT.processors.utils_ner import DataProcessor, InputExample
+from BIONER_ER.processors.utils_ner import DataProcessor, InputExample
 
 task = "ner"  # 需要是"ner", "pos" 或者 "chunk"
 batch_size = 16
@@ -40,7 +40,7 @@ print(tokens)
 word_ids = tokenized_input.word_ids()
 print(word_ids)
 
-train_data = DataProcessor.read_tsv("D:\pythonProject\BioBERT\datas\BC4CHEMD\\train.tsv")
+train_data = DataProcessor.read_tsv(FILE_NAME)
 train_data2 = processors.get_train_examples("D:\pythonProject\BioBERT\datas\BC4CHEMD")
 print(train_data[5])
 print(train_data2[:5])
@@ -126,7 +126,7 @@ def align_label(texts, labels):
 
     return label_ids
 # 构建自己的数据集类
-class DataSequence(torch.utils.data.Dataset):
+class DataSequence(Dataset):
     def __init__(self, df):
         # 根据空格拆分labels
         lb = [i.split() for i in df['labels'].values.tolist()]
@@ -151,3 +151,28 @@ class DataSequence(torch.utils.data.Dataset):
         batch_data = self.get_batch_data(idx)
         batch_labels = self.get_batch_labels(idx)
         return batch_data, batch_labels
+
+
+class BioDataset(Dataset):
+    def __init__(self, df):
+        self.train_data = DataProcessor.read_tsv(FILE_NAME)
+
+    def __len__(self):
+        return len(self.labels)
+
+    def get_batch_data(self, idx):
+        return self.texts[idx]
+
+    def get_batch_labels(self, idx):
+        return torch.LongTensor(self.labels[idx])
+
+    def __getitem__(self, idx):
+        batch_data = self.get_batch_data(idx)
+        batch_labels = self.get_batch_labels(idx)
+        return batch_data, batch_labels
+
+
+dataset = BioDataset()
+print(len(dataset))
+print(dataset[50])
+print(dataset[1:100])
