@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 import modle
-from BioBERT.processors.preprocess import DataSequence
+from BIONER_ER.processors.preprocess import DataSequence
 
 
 def train_loop(model, df_train, df_val):

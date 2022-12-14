@@ -154,8 +154,8 @@ class DataSequence(Dataset):
 
 
 class BioDataset(Dataset):
-    def __init__(self, df):
-        self.train_data = DataProcessor.read_tsv(FILE_NAME)
+    def __init__(self, file_name):
+        self.train_data = DataProcessor.read_tsv(file_name)
 
     def __len__(self):
         return len(self.labels)
@@ -172,7 +172,7 @@ class BioDataset(Dataset):
         return batch_data, batch_labels
 
 
-dataset = BioDataset()
+dataset = BioDataset(FILE_NAME)
 print(len(dataset))
 print(dataset[50])
 print(dataset[1:100])

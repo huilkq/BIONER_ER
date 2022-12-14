@@ -91,7 +91,7 @@ class DataProcessor(object):
     def read_tsv(cls, input_file, quotechar=None):
         """Reads a tab separated value file."""
         lines = []
-        with open(input_file, "r", encoding="utf-8-sig") as f:
+        with open(input_file, "r", encoding="utf-8") as f:
             words = []
             labels = []
             reader = csv.reader(f, delimiter="\t", quotechar=quotechar)
