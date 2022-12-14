@@ -1,66 +1,79 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-from crf import CRF
-from transformers.modeling_bert import BertPreTrainedModel
-from transformers.modeling_bert import BertModel
-from torch.nn import CrossEntropyLoss
-from ..losses.focal_loss import FocalLoss
-from ..losses.label_smoothing import LabelSmoothingCrossEntropy
+from transformers import BertPreTrainedModel, BertModel, BertConfig
+from torchcrf import CRF
+from .module import SlotClassifier
 
-class BertSoftmaxForNer(BertPreTrainedModel):
-    def __init__(self, config):
-        super(BertSoftmaxForNer, self).__init__(config)
-        self.num_labels = config.num_labels
-        self.bert = BertModel(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
-        self.loss_type = config.loss_type
-        self.init_weights()
 
-    def forward(self, input_ids, attention_mask=None, token_type_ids=None,
-                position_ids=None, head_mask=None, labels=None):
-        outputs = self.bert(input_ids = input_ids,attention_mask=attention_mask,token_type_ids=token_type_ids)
-        sequence_output = outputs[0]
-        sequence_output = self.dropout(sequence_output)
-        logits = self.classifier(sequence_output)
-        outputs = (logits,) + outputs[2:]  # add hidden states and attention if they are here
-        if labels is not None:
-            assert self.loss_type in ['lsr', 'focal', 'ce']
-            if self.loss_type == 'lsr':
-                loss_fct = LabelSmoothingCrossEntropy(ignore_index=0)
-            elif self.loss_type == 'focal':
-                loss_fct = FocalLoss(ignore_index=0)
+class NerBERT(BertPreTrainedModel):
+    """
+    构建NerBERT模块
+    """
+    def __init__(self, config, args, slot_label_lst):
+        super(NerBERT, self).__init__(config)
+        # 参数
+        self.args = args
+        # 命名实体标签长度
+        self.num_slot_labels = len(slot_label_lst)
+        # 加载预训练BERT模型-编码器模块
+        self.bert = BertModel(config=config)
+        # 命名实体标签分类层
+        self.slot_classifier = SlotClassifier(config.hidden_size, self.num_slot_labels, args.dropout_rate)
+        # 通过use_crf参数来判断是否使用crf层，如果用的话就加载
+        if args.use_crf:
+            self.crf = CRF(num_tags=self.num_slot_labels, batch_first=True)
+
+    # 定义NERBERT模型的前向传播
+    def forward(self, input_ids, attention_mask, token_type_ids, slot_labels_ids):
+        # input_ids: (B, L)
+        # attention_mask: (B, L)
+        # token_type_ids: (B, L)
+        # slot_labels_ids: (B, L)
+
+        # sequence_output, pooled_output, (hidden_states), (attentions)
+        outputs = self.bert(input_ids, attention_mask=attention_mask,
+                            token_type_ids=token_type_ids)
+        # 通过BERT模型得到向量表征
+        sequence_output = outputs[0]  # [B, L, D]
+        # [CLS]  # [B, D]
+        pooled_output = outputs[1]
+        # 将sequence_output在每一个tokens上做一个分类
+        # (B, L, num_slot_labels)
+        slot_logits = self.slot_classifier(sequence_output)
+        # add hidden states and attention if they are here
+        outputs = (slot_logits, ) + outputs[2:]
+
+        # Slot Softmax
+        if slot_labels_ids is not None:
+            # 如果使用了crf，计算slot_loss
+            if self.args.use_crf:
+                slot_loss = self.crf(
+                    slot_logits,
+                    slot_labels_ids,
+                    mask=attention_mask.byte(),
+                    reduction='mean'
+                )
+                slot_loss = -1 * slot_loss  # negative log-likelihood
+            # 如果没有使用crf，计算slot_loss
             else:
-                loss_fct = CrossEntropyLoss(ignore_index=0)
-            # Only keep active parts of the loss
-            if attention_mask is not None:
-                active_loss = attention_mask.view(-1) == 1
-                active_logits = logits.view(-1, self.num_labels)[active_loss]
-                active_labels = labels.view(-1)[active_loss]
-                loss = loss_fct(active_logits, active_labels)
-            else:
-                loss = loss_fct(logits.view(-1, self.num_labels), labels.view(-1))
-            outputs = (loss,) + outputs
-        return outputs  # (loss), scores, (hidden_states), (attentions)
+                # 交叉熵损失函数，设置loss function中忽略的label编号
+                slot_loss_fct = nn.CrossEntropyLoss(ignore_index=self.args.ignore_index) # default -100
+                # Only keep active parts of the loss
+                if attention_mask is not None:
+                    # attention_mask中有1的部分就是有实际意义的部分
+                    active_loss = attention_mask.view(-1) == 1  # (B * L, )
+                    # slot_logits: (B, L, num_slot_labels) --> (B * L, num_slot_labels)
+                    # (有效长度， num_slot_labels)
+                    active_logits = slot_logits.view(-1, self.num_slot_labels)[active_loss]
+                    # ner标签有效长度部分
+                    active_labels = slot_labels_ids.view(-1)[active_loss]
+                    # 计算有效长度的交叉熵损失
+                    slot_loss = slot_loss_fct(active_logits, active_labels)
 
-class BertCrfForNer(BertPreTrainedModel):
-    def __init__(self, config):
-        super(BertCrfForNer, self).__init__(config)
-        self.bert = BertModel(config)
-        self.dropout = nn.Dropout(config.hidden_dropout_prob)
-        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
-        self.crf = CRF(num_tags=config.num_labels, batch_first=True)
-        self.init_weights()
+                else:
+                    # slot_logits.view(-1, self.num_slot_labels)输出为每一token对应每一个命名实体标签的概率
+                    slot_loss = slot_loss_fct(slot_logits.view(-1, self.num_slot_labels), slot_labels_ids.view(-1))
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None,labels=None,input_lens=None):
-        outputs =self.bert(input_ids = input_ids,attention_mask=attention_mask,token_type_ids=token_type_ids)
-        sequence_output = outputs[0]
-        sequence_output = self.dropout(sequence_output)
-        logits = self.classifier(sequence_output)
-        outputs = (logits,)
-        if labels is not None:
-            loss = self.crf(emissions = logits, tags=labels, mask=attention_mask)
-            outputs =(-1*loss,)+outputs
-        return outputs # (loss), scores
-
+            outputs = (slot_loss,) + outputs
+        # 返回(loss), logits, (hidden_states), (attentions)
+        return outputs
