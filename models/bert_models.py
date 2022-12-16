@@ -2,15 +2,16 @@ import torch
 import torch.nn as nn
 from transformers import BertPreTrainedModel, BertModel, BertConfig
 from torchcrf import CRF
+from torch.nn.utils.rnn import pad_sequence
 from .module import SlotClassifier
 
 
-class NerBERT(BertPreTrainedModel):
+class NerBioBERT(BertPreTrainedModel):
     """
-    构建NerBERT模块
+    构建NerBioBERT模块
     """
     def __init__(self, config, args, slot_label_lst):
-        super(NerBERT, self).__init__(config)
+        super(NerBioBERT, self).__init__(config)
         # 参数
         self.args = args
         # 命名实体标签长度
@@ -23,7 +24,7 @@ class NerBERT(BertPreTrainedModel):
         if args.use_crf:
             self.crf = CRF(num_tags=self.num_slot_labels, batch_first=True)
 
-    # 定义NERBERT模型的前向传播
+    # 定义NerBioBERT模型的前向传播
     def forward(self, input_ids, attention_mask, token_type_ids, slot_labels_ids):
         # input_ids: (B, L)
         # attention_mask: (B, L)
@@ -76,4 +77,50 @@ class NerBERT(BertPreTrainedModel):
 
             outputs = (slot_loss,) + outputs
         # 返回(loss), logits, (hidden_states), (attentions)
+        return outputs
+
+
+class BertNER(BertPreTrainedModel):
+    def __init__(self, config):
+        super(BertNER, self).__init__(config)
+        # 命名实体标签长度
+        self.num_labels = config.num_labels
+        # 加载预训练BERT模型-编码器模块
+        self.bert = BertModel(config)
+
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        # 命名实体标签分类层
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        # 通过use_crf参数来判断是否使用crf层，如果用的话就加载
+        self.crf = CRF(config.num_labels, batch_first=True)
+
+        self.init_weights()
+
+    def forward(self, input_data, token_type_ids=None, attention_mask=None, labels=None,
+                position_ids=None, inputs_embeds=None, head_mask=None):
+        input_ids, input_token_starts = input_data
+        outputs = self.bert(input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids,
+                            position_ids=position_ids,
+                            head_mask=head_mask,
+                            inputs_embeds=inputs_embeds)
+        sequence_output = outputs[0]
+
+        # 去除[CLS]标签等位置，获得与label对齐的pre_label表示
+        origin_sequence_output = [layer[starts.nonzero().squeeze(1)]
+                                  for layer, starts in zip(sequence_output, input_token_starts)]
+        # 将sequence_output的pred_label维度padding到最大长度
+        padded_sequence_output = pad_sequence(origin_sequence_output, batch_first=True)
+        # dropout pred_label的一部分feature
+        padded_sequence_output = self.dropout(padded_sequence_output)
+        # 得到判别值
+        logits = self.classifier(padded_sequence_output)
+        outputs = (logits,)
+        if labels is not None:
+            loss_mask = labels.gt(-1)
+            loss = self.crf(logits, labels, loss_mask) * (-1)
+            outputs = (loss,) + outputs
+
+        # contain: (loss), scores
         return outputs
