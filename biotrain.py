@@ -89,12 +89,16 @@ def save_pretrained(model, path):
 
 
 def main():
+    # 训练参数
     arg = Arguments.get_parser()
 
+    # 分词器
     tokenizer = AutoTokenizer.from_pretrained(MODEL_BIOBERT)
+    # 标签
     lables = ["O", "B-Chemical", "I-Chemical"]
     # 调用gpu
     device = torch.device("cuda")
+    # 模型
     model = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
 
     # 定义训练和验证集数据
@@ -124,8 +128,7 @@ def main():
 
     # Warmup学习率预热
     len_dataset = len(train_dataset)
-    total_steps = (len_dataset // arg.batch_size) * arg.epochs if len_dataset % arg.batch_size == 0 else (
-                                                                                                                 len_dataset // arg.batch_size + 1) * arg.epochs
+    total_steps = (len_dataset // arg.batch_size) * arg.epochs if len_dataset % arg.batch_size == 0 else (len_dataset // arg.batch_size + 1) * arg.epochs
 
     scheduler = get_linear_schedule_with_warmup(optimizer_AdamW, num_warmup_steps=arg.warm_up_ratio * total_steps,
                                                 num_training_steps=total_steps)
