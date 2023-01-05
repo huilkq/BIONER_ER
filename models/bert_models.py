@@ -4,14 +4,15 @@ from transformers import BertPreTrainedModel, BertModel, BertConfig
 from torchcrf import CRF
 from torch.nn.utils.rnn import pad_sequence
 from .module import SlotClassifier
+from torch.nn import CrossEntropyLoss
 
 
-class NerBioBERT(BertPreTrainedModel):
+class BioBERT_CRF(BertPreTrainedModel):
     """
     构建NerBioBERT模块
     """
     def __init__(self, config, args, slot_label_lst):
-        super(NerBioBERT, self).__init__(config)
+        super(BioBERT_CRF, self).__init__(config)
         # 参数
         self.args = args
         # 命名实体标签长度
@@ -25,7 +26,7 @@ class NerBioBERT(BertPreTrainedModel):
             self.crf = CRF(num_tags=self.num_slot_labels, batch_first=True)
 
     # 定义NerBioBERT模型的前向传播
-    def forward(self, input_ids, attention_mask, token_type_ids, slot_labels_ids):
+    def forward(self, input_ids, attention_mask, token_type_ids, label_ids):
         # input_ids: (B, L)
         # attention_mask: (B, L)
         # token_type_ids: (B, L)
@@ -45,12 +46,12 @@ class NerBioBERT(BertPreTrainedModel):
         outputs = (slot_logits, ) + outputs[2:]
 
         # Slot Softmax
-        if slot_labels_ids is not None:
+        if label_ids is not None:
             # 如果使用了crf，计算slot_loss
             if self.args.use_crf:
                 slot_loss = self.crf(
                     slot_logits,
-                    slot_labels_ids,
+                    label_ids,
                     mask=attention_mask.byte(),
                     reduction='mean'
                 )
@@ -67,13 +68,13 @@ class NerBioBERT(BertPreTrainedModel):
                     # (有效长度， num_slot_labels)
                     active_logits = slot_logits.view(-1, self.num_slot_labels)[active_loss]
                     # ner标签有效长度部分
-                    active_labels = slot_labels_ids.view(-1)[active_loss]
+                    active_labels = label_ids.view(-1)[active_loss]
                     # 计算有效长度的交叉熵损失
                     slot_loss = slot_loss_fct(active_logits, active_labels)
 
                 else:
                     # slot_logits.view(-1, self.num_slot_labels)输出为每一token对应每一个命名实体标签的概率
-                    slot_loss = slot_loss_fct(slot_logits.view(-1, self.num_slot_labels), slot_labels_ids.view(-1))
+                    slot_loss = slot_loss_fct(slot_logits.view(-1, self.num_slot_labels), label_ids.view(-1))
 
             outputs = (slot_loss,) + outputs
         # 返回(loss), logits, (hidden_states), (attentions)
@@ -124,3 +125,33 @@ class BertNER(BertPreTrainedModel):
 
         # contain: (loss), scores
         return outputs
+
+
+class BertCrfNer(BertPreTrainedModel):
+    def __init__(self, config):
+        super(BertCrfNer, self).__init__(config)
+        self.config = config
+        # 加载预训练BERT模型-编码器模块
+        self.bert = BertModel(config)
+        # Dropout的是为了防止过拟合而设置,只能用在训练部分而不能用在测试部分
+        self.dropout = nn.Dropout(config.hidden_dropout_prob)
+        # 命名实体标签分类层
+        self.classifier = nn.Linear(config.hidden_size, config.num_labels)
+        # crf层
+        self.crf = CRF(num_tags=config.num_labels, batch_first=True)
+        self.init_weights()
+
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, labels_ids=None):
+        outputs = self.bert(input_ids=input_ids,
+                            attention_mask=attention_mask,
+                            token_type_ids=token_type_ids)
+        sequence_output = outputs[0]
+        sequence_output = self.dropout(sequence_output)
+        # 得到判别值
+        logits = self.classifier(sequence_output)
+        outputs = (logits,)
+        if labels_ids is not None:
+            loss = self.crf(emissions=logits, tags=labels_ids, mask=attention_mask) * (-1)
+            outputs = (loss,) + outputs
+        return outputs  # (loss), scores
+

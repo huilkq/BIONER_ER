@@ -42,7 +42,6 @@ class Split(Enum):
     test = "test"
 
 
-
 # 读取本地数据集
 class DataProcessor(object):
     """Base class for data converters for sequence classification data sets."""

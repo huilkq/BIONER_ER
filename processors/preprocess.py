@@ -1,11 +1,13 @@
 import os
 from typing import List, Optional
 
+import numpy as np
 import torch
 import logging
 
 from filelock import FileLock
 from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
 from transformers import BertTokenizerFast, AutoTokenizer, BertTokenizer, PreTrainedTokenizer
 from BIONER_ER.config.model_config import model_checkpoint, FILE_NAME, MODEL_BIOBERT
 from BIONER_ER.processors.data_loader import BioNERProcessor, Split,  InputFeatures, get_labels, InputExample
@@ -19,7 +21,6 @@ processors = BioNERProcessor()
 # datasets = load_dataset("conll2003")
 tokenizer = AutoTokenizer.from_pretrained(MODEL_BIOBERT)
 lables = ["O", "B-Chemical", "I-Chemical"]
-print(lables)
 
 # labels_to_ids = {k: v for v, k in enumerate(sorted(label_list))}
 # ids_to_labels = {v: k for v, k in enumerate(sorted(label_list))}
@@ -30,6 +31,13 @@ print(lables)
 
 
 # 把数据集转换成bert需要的格式
+"""
+examples: InputExample的实例对像
+label_list: label的列表
+max_seq_length: 输入序列的最大的长度
+tokenizer: Tokenizer的实例化对象
+后面的参数一般固定不用动
+"""
 def convert_examples_to_features(
         examples: List[InputExample],
         label_list: List[str],
@@ -47,7 +55,8 @@ def convert_examples_to_features(
         sequence_a_segment_id=0,
         mask_padding_with_zero=True,
 ):
-    """ Loads a data file into a list of `InputFeatures`
+    """
+        Loads a data file into a list of `InputFeatures`
         `cls_token_at_end` define the location of the CLS token:
             - False (Default, BERT/XLM pattern): [CLS] + A + [SEP] + B + [SEP]
             - True (XLNet/GPT pattern): A + [SEP] + B + [SEP] + [CLS]
@@ -125,6 +134,7 @@ def convert_examples_to_features(
         assert len(segment_ids) == max_seq_length
         assert len(label_ids) == max_seq_length
 
+        # 打印前五个example
         if ex_index < 5:
             logger.info("*** Example ***")
             logger.info("guid: %s", example.guid)
@@ -137,6 +147,7 @@ def convert_examples_to_features(
         if "token_type_ids" not in tokenizer.model_input_names:
             segment_ids = None
 
+        # 以InputFeatures对象存储example
         features.append(
             InputFeatures(
                 input_ids=input_ids, attention_mask=input_mask, token_type_ids=segment_ids, label_ids=label_ids
@@ -149,7 +160,14 @@ def convert_examples_to_features(
 class BioDataset(Dataset):
 
     features: List[InputFeatures]
-
+    """
+    data_dir: 数据存放路径
+    tokenizer: Tokenizer的实例化对象
+    labels: label的列表
+    max_seq_length: 输入序列的最大的长度
+    overwrite_cache: 
+    mode: train/dev/test 模式
+    """
     def __init__(
             self,
             data_dir: str,
@@ -190,16 +208,30 @@ class BioDataset(Dataset):
         return len(self.features)
 
     def __getitem__(self, i) -> InputFeatures:
-        return self.features[i]
+        item = self.features[i]
+        return item
+
+# def coffate_fn():
 
 
-train_datasets = BioDataset(
-    data_dir=FILE_NAME,
-    tokenizer=tokenizer,
-    labels=lables,
-    max_seq_length=50,
-    mode=Split.train
+# 開始訓練
+if __name__ == "__main__":
+    device = torch.device("cuda")
+    train_datasets = BioDataset(
+        data_dir=FILE_NAME,
+        tokenizer=tokenizer,
+        labels=lables,
+        max_seq_length=50,
+        mode=Split.train
     )
-print(train_datasets[6].input_ids)
-tokens = tokenizer.convert_ids_to_tokens(train_datasets[6].input_ids)
-print(tokens)
+    print(train_datasets[1])
+    # train_dataloader = DataLoader(dataset=train_datasets, num_workers=4,  shuffle=True)
+    # features, targets = next(iter(train_dataloader))  # 从dataloader中取出一个batch
+    # print(features.shape)
+    # print(targets.shape)
+    # print(targets)
+    # for i, train_data in enumerate(train_dataloader):
+    #     train_label = train_data['label_ids']
+    #     mask = train_data['attention_mask']
+    #     input_id = train_data['input_ids']
+    #     print(input_id.shape, train_label)
