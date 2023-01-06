@@ -7,7 +7,8 @@ import config
 from torch.optim import SGD
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from transformers import AutoTokenizer, AdamW, get_linear_schedule_with_warmup, Trainer
+from typing import Dict, List, Optional, Tuple
+from transformers import AutoTokenizer, AdamW, get_linear_schedule_with_warmup, Trainer, AutoConfig
 
 from BIONER_ER.config.config import Arguments
 from BIONER_ER.config.model_config import MODEL_BIOBERT, FILE_NAME
@@ -18,11 +19,20 @@ from BIONER_ER.processors.preprocess import BioDataset
 
 # 训练函数
 def train(model, train_loader, optimizer, scheduler, device):
+    """
+
+    :param model: 网络模型
+    :param train_loader: 训练数据集
+    :param optimizer: 优化器
+    :param scheduler: 对优化器的学习率进行调整
+    :param device: 训练设备
+    :return:
+    """
     # 训练模型
     model.train()
     total_acc_train = 0
     total_loss_train = 0
-    total_iter = len(train_loader)
+    total_iter_train = len(train_loader)
     # 按批量循环训练模型
     for idx, batch in tqdm(train_loader):
         # 从train_data中获取mask和input_id
@@ -49,6 +59,11 @@ def train(model, train_loader, optimizer, scheduler, device):
         # 参数更新
         optimizer.step()
         scheduler.step()
+    # 计算一个epoch在训练集上的损失和精度
+    train_accuracy = total_acc_train / total_iter_train
+    train_loss = total_loss_train / total_iter_train
+    print("Accuracy: %.4f" % train_accuracy)
+    print("Average testing loss: %.4f" % train_loss)
 
 
 """
@@ -60,9 +75,17 @@ F1值：F1 = 2 *准确率 * 召回率 / (准确率 + 召回率)
 
 
 def evaluate(model, eval_loader, device):
+    """
+
+    :param model: 网络模型
+    :param eval_loader: 评估数据集
+    :param device: 设备：cpu&&gpu
+    :return:
+    """
     model.eval()
-    total_eval_accuracy = 0
-    total_eval_loss = 0
+    total_acc_eval = 0
+    total_loss_eval = 0
+    total_iter_eval = len(eval_loader)
     for batch in eval_loader:
         with torch.no_grad():
             input_ids = batch['input_ids'].to(device)
@@ -72,11 +95,11 @@ def evaluate(model, eval_loader, device):
         loss = outputs.loss
         logits = outputs[1]
 
-        total_eval_loss += loss.item()
-        total_eval_accuracy += (logits.argmax(2).data == labels.data).float().mean().item()
-
-    val_accuracy = total_eval_accuracy / len(eval_loader)
-    val_loss = total_eval_loss / len(eval_loader)
+        total_loss_eval += loss.item()
+        total_acc_eval += (logits.argmax(dim=1).data == labels.data).float().mean().item()
+    # 计算一个epoch在训练集上的损失和精度
+    val_accuracy = total_acc_eval / total_iter_eval
+    val_loss = total_loss_eval / total_iter_eval
     print("Accuracy: %.4f" % val_accuracy)
     print("Average testing loss: %.4f" % val_loss)
     print("-------------------------------")
@@ -91,28 +114,36 @@ def save_pretrained(model, path):
 def main():
     # 训练参数
     arg = Arguments.get_parser()
-
+    # 标签
+    labels = ["O", "B-Chemical", "I-Chemical"]
+    label_map: Dict[int, str] = {i: label for i, label in enumerate(labels)}
+    bert_config = AutoConfig.from_pretrained(
+        MODEL_BIOBERT
+        # num_labels=len(labels),
+        # id2label=label_map,
+        # label2id={label: i for i, label in enumerate(labels)},
+        # cache_dir=arg.cache_dir,
+    )
     # 分词器
     tokenizer = AutoTokenizer.from_pretrained(MODEL_BIOBERT)
-    # 标签
-    lables = ["O", "B-Chemical", "I-Chemical"]
     # 调用gpu
     device = torch.device("cuda")
     # 模型
-    model = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
+    model_bert = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
+    model_bert_crf = BertCrfNer(bert_config).to(device)
 
     # 定义训练和验证集数据
     train_dataset = BioDataset(
         data_dir=FILE_NAME,
         tokenizer=tokenizer,
-        labels=lables,
+        labels=labels,
         max_seq_length=256,
         mode=Split.train
     )
     dev_dataset = BioDataset(
         data_dir=FILE_NAME,
         tokenizer=tokenizer,
-        labels=lables,
+        labels=labels,
         max_seq_length=256,
         mode=Split.dev
     )
@@ -121,8 +152,8 @@ def main():
     dev_dataloader = DataLoader(dataset=dev_dataset, num_workers=4, )
 
     # 定义优化器
-    optimizer_SGD = SGD(model.parameters(), lr=arg.lr)
-    optimizer_AdamW = AdamW(model.parameters(), lr=arg.lr, eps=1e-6)
+    optimizer_SGD = SGD(model_bert_crf.parameters(), lr=arg.lr)  # SGD
+    optimizer_AdamW = AdamW(model_bert_crf.parameters(), lr=arg.lr, eps=1e-6)  # AdamW
     # 交叉熵损失函数
     criterion = torch.nn.CrossEntropyLoss(ignore_index=100)
 
@@ -135,14 +166,13 @@ def main():
 
     print('Start Train...,')
     for epoch in range(1, arg.epochs + 1):
-        train(model, train_dataloader, optimizer_AdamW, scheduler, device)
-
+        train(model_bert_crf, train_dataloader, optimizer_AdamW, scheduler, device)
         print(f"=========eval at epoch={epoch}=========")
         if not os.path.exists(arg.logdir): os.makedirs(arg.logdir)
         fname = os.path.join(arg.logdir, str(epoch))
-        precision, recall, f1 = eval(model, dev_dataloader, fname)
+        eval(model_bert_crf, dev_dataloader, device)
 
-        torch.save(model.state_dict(), f"{fname}.pt")
+        torch.save(model_bert_crf.state_dict(), f"{fname}.pt")
         print(f"weights were saved to {fname}.pt")
 
 

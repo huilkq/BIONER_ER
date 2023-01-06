@@ -31,13 +31,6 @@ lables = ["O", "B-Chemical", "I-Chemical"]
 
 
 # 把数据集转换成bert需要的格式
-"""
-examples: InputExample的实例对像
-label_list: label的列表
-max_seq_length: 输入序列的最大的长度
-tokenizer: Tokenizer的实例化对象
-后面的参数一般固定不用动
-"""
 def convert_examples_to_features(
         examples: List[InputExample],
         label_list: List[str],
@@ -55,6 +48,12 @@ def convert_examples_to_features(
         sequence_a_segment_id=0,
         mask_padding_with_zero=True,
 ):
+    """
+    :param examples: InputExample的实例对像
+    :param label_list: 标签列表
+    :param max_seq_length: 输入序列的最大的长度
+    :param tokenizer: Tokenizer的实例化对象
+    """
     """
         Loads a data file into a list of `InputFeatures`
         `cls_token_at_end` define the location of the CLS token:
@@ -160,14 +159,7 @@ def convert_examples_to_features(
 class BioDataset(Dataset):
 
     features: List[InputFeatures]
-    """
-    data_dir: 数据存放路径
-    tokenizer: Tokenizer的实例化对象
-    labels: label的列表
-    max_seq_length: 输入序列的最大的长度
-    overwrite_cache: 
-    mode: train/dev/test 模式
-    """
+
     def __init__(
             self,
             data_dir: str,
@@ -177,6 +169,14 @@ class BioDataset(Dataset):
             overwrite_cache=False,
             mode: Split = Split.train,
     ):
+        """
+        :param data_dir: 数据存放路径
+        :param tokenizer: Tokenizer的实例化对象
+        :param labels: 标签列表
+        :param max_seq_length: 输入序列的最大的长度
+        :param overwrite_cache:
+        :param mode: train/dev/test 模式
+        """
         # 从缓存或数据集文件加载数据集文件
         cached_features_file = os.path.join(
             data_dir, "cached_{}_{}_{}".format(mode.value, tokenizer.__class__.__name__, str(max_seq_length)),
