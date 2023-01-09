@@ -1,3 +1,4 @@
+import copy
 import csv
 import json
 import os
@@ -21,6 +22,18 @@ class InputExample:
     guid: str
     words: List[str]
     labels: Optional[List[str]]
+    # def __init__(self, guid, words, labels=None):
+    #     self.guid = guid
+    #     self.words = words
+    #     self.labels = labels
+    #
+    # def __repr__(self):
+    #     return str(self.to_dict())
+    #
+    # def to_dict(self):
+    #     """Serializes this instance to a Python dictionary."""
+    #     output = copy.deepcopy(self.__dict__)
+    #     return output
 
 
 @dataclass
@@ -34,6 +47,19 @@ class InputFeatures:
     attention_mask: List[int]
     token_type_ids: Optional[List[int]] = None
     label_ids: Optional[List[int]] = None
+    # def __init__(self,  input_ids, attention_mask, token_type_ids, label_ids):
+    #     self.input_ids = input_ids
+    #     self.attention_mask = attention_mask
+    #     self.token_type_ids = token_type_ids
+    #     self.label_ids = label_ids
+    #
+    # def __repr__(self):
+    #     return str(self.to_dict())
+    #
+    # def to_dict(self):
+    #     """Serializes this instance to a Python dictionary."""
+    #     output = copy.deepcopy(self.__dict__)
+    #     return output
 
 
 class Split(Enum):
@@ -130,9 +156,17 @@ class DataProcessor(object):
 class BioNERProcessor(DataProcessor):
     """Processor for the chinese ner data set."""
 
-    def get_examples(self, data_dir, mode):
+    def get_train_examples(self, data_dir):
         """See base class."""
-        return self.create_examples(self.read_tsv(os.path.join(data_dir, f"{mode}.tsv")))
+        return self.create_examples(self.read_tsv(os.path.join(data_dir, "train.tsv")))
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        return self.create_examples(self.read_tsv(os.path.join(data_dir, "devel.tsv")))
+
+    def get_test_examples(self, data_dir):
+        """See base class."""
+        return self.create_examples(self.read_tsv(os.path.join(data_dir, "test.tsv")))
 
     def get_labels(self):
         """See base class."""

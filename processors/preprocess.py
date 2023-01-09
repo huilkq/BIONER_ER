@@ -1,20 +1,20 @@
 import os
-from typing import List, Optional
+from typing import List, Optional, Dict
 
 import numpy as np
 import torch
 import logging
 
 from filelock import FileLock
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 from tqdm import tqdm
-from transformers import BertTokenizerFast, AutoTokenizer, BertTokenizer, PreTrainedTokenizer
+from transformers import BertTokenizerFast, AutoTokenizer, BertTokenizer, PreTrainedTokenizer, \
+    BertForTokenClassification
+
 from BIONER_ER.config.model_config import model_checkpoint, FILE_NAME, MODEL_BIOBERT
 from BIONER_ER.processors.data_loader import BioNERProcessor, Split,  InputFeatures, get_labels, InputExample
 
 logger = logging.getLogger()
-task = "ner"  # 需要是"ner", "pos" 或者 "chunk"
-batch_size = 16
 processors = BioNERProcessor()
 
 """加载数据集和分词器"""
@@ -25,9 +25,6 @@ lables = ["O", "B-Chemical", "I-Chemical"]
 # labels_to_ids = {k: v for v, k in enumerate(sorted(label_list))}
 # ids_to_labels = {v: k for v, k in enumerate(sorted(label_list))}
 # print(labels_to_ids)
-
-# example = datasets[:7]
-# print(example)
 
 
 # 把数据集转换成bert需要的格式
@@ -70,7 +67,7 @@ def convert_examples_to_features(
         tokens = []
         label_ids = []
         for word, label in zip(example.words, example.labels):
-            word_tokens = tokenizer.tokenize(word)
+            word_tokens = tokenizer.tokenize(word, return_tensors="pt")
 
             # bert-base-multilingual-cased sometimes output "nothing ([]) when calling tokenize with just a space.
             if len(word_tokens) > 0:
@@ -158,8 +155,6 @@ def convert_examples_to_features(
 # 构建自己的数据集类
 class BioDataset(Dataset):
 
-    features: List[InputFeatures]
-
     def __init__(
             self,
             data_dir: str,
@@ -167,7 +162,7 @@ class BioDataset(Dataset):
             labels: List[str],
             max_seq_length: Optional[int] = None,
             overwrite_cache=False,
-            mode: Split = Split.train,
+            data_type='train'
     ):
         """
         :param data_dir: 数据存放路径
@@ -175,11 +170,11 @@ class BioDataset(Dataset):
         :param labels: 标签列表
         :param max_seq_length: 输入序列的最大的长度
         :param overwrite_cache:
-        :param mode: train/dev/test 模式
+        :param data_type: train/dev/test 模式
         """
         # 从缓存或数据集文件加载数据集文件
         cached_features_file = os.path.join(
-            data_dir, "cached_{}_{}_{}".format(mode.value, tokenizer.__class__.__name__, str(max_seq_length)),
+            data_dir, "cached_{}_{}_{}".format(data_type, tokenizer.__class__.__name__, str(max_seq_length)),
         )
         # 确保分布式训练中只有第一个进程处理数据集，
         # 其他人将使用缓存.
@@ -192,7 +187,12 @@ class BioDataset(Dataset):
                 self.features = torch.load(cached_features_file)
             else:
                 logger.info(f"Creating features from dataset file at {data_dir}")
-                examples = processors.get_examples(data_dir, mode)
+                if data_type == 'train':
+                    examples = processors.get_train_examples(data_dir)
+                elif data_type == 'dev':
+                    examples = processors.get_dev_examples(data_dir)
+                else:
+                    examples = processors.get_test_examples(data_dir)
                 # TODO clean up all this to leverage built-in features of tokenizers
                 self.features = convert_examples_to_features(
                     examples,
@@ -207,11 +207,33 @@ class BioDataset(Dataset):
     def __len__(self):
         return len(self.features)
 
-    def __getitem__(self, i) -> InputFeatures:
-        item = self.features[i]
-        return item
+    def __getitem__(self, idx):
+        features = self.features[idx]
+        # dataset = {
+        #     "input_ids": torch.tensor([features.input_ids], dtype=torch.long),
+        #     "attention_mask": torch.tensor([features.attention_mask], dtype=torch.long),
+        #     "token_type_ids": torch.tensor([features.token_type_ids], dtype=torch.long),
+        #     "label_ids": torch.tensor([features.label_ids], dtype=torch.long)
+        # }
+        # datasets = {
+        #     "input_ids ": torch.tensor([f.input_ids for f in features], dtype=torch.long),
+        #     "attention_mask": torch.tensor([f.attention_mask for f in features], dtype=torch.long),
+        #     "token_type_ids": torch.tensor([f.token_type_ids for f in features], dtype=torch.long),
+        #     "label_ids": torch.tensor([f.label_ids for f in features], dtype=torch.long)
+        # }
+        return features
 
-# def coffate_fn():
+
+# 转换成tensor
+def data_collator(features: List[InputFeatures]) -> Dict[str, torch.Tensor]:
+    first = features[0]
+    batch = {}
+    for k, v in first.__dict__.items():
+        if k == 'metadata':
+            batch[k] = [f.__dict__[k] for f in features]
+        else:
+            batch[k] = torch.tensor([f.__dict__[k] for f in features], dtype=torch.long)
+    return batch
 
 
 # 開始訓練
@@ -221,17 +243,17 @@ if __name__ == "__main__":
         data_dir=FILE_NAME,
         tokenizer=tokenizer,
         labels=lables,
-        max_seq_length=50,
-        mode=Split.train
+        max_seq_length=256,
+        data_type='train'
     )
-    print(train_datasets[1])
-    # train_dataloader = DataLoader(dataset=train_datasets, num_workers=4,  shuffle=True)
-    # features, targets = next(iter(train_dataloader))  # 从dataloader中取出一个batch
-    # print(features.shape)
-    # print(targets.shape)
-    # print(targets)
-    # for i, train_data in enumerate(train_dataloader):
-    #     train_label = train_data['label_ids']
-    #     mask = train_data['attention_mask']
-    #     input_id = train_data['input_ids']
-    #     print(input_id.shape, train_label)
+    # print(train_datasets)
+    model_bert = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
+    train_dataloader = DataLoader(dataset=train_datasets, num_workers=4,  batch_size=1, shuffle=True, collate_fn=data_collator)
+    for i, train_data in enumerate(train_dataloader):
+        train_label = train_data['label_ids']
+        mask = train_data['attention_mask']
+        input_id = train_data['input_ids']
+        outputs = model_bert(input_id, attention_mask=mask, labels=train_label)
+        loss = outputs.loss
+        logits = outputs[1]
+        print(input_id.shape, input_id, logits.shape)

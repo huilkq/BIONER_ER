@@ -25,3 +25,5 @@ def evaluate(model, eval_loader, device):
     print("Accuracy: %.4f" % val_accuracy)
     print("Average testing loss: %.4f" % val_loss)
     print("-------------------------------")
+
+
