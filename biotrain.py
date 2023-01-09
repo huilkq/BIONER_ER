@@ -35,11 +35,9 @@ def train(model, train_loader, optimizer, scheduler, device):
     # 按批量循环训练模型
     for idx, batch in enumerate(train_loader):
         # 从train_data中获取mask和input_id
-        input_ids = batch['input_ids'].to(device)
+        input_ids = batch['input_ids'].to(device)  # shape: [batch_size, max_seq_length]
         attention_mask = batch['attention_mask'].to(device)  # shape: [batch_size, max_seq_length]
-        token_type_ids = batch['token_type_ids'].to(device)  # shape: [batch_size, max_seq_length]
         labels = batch['label_ids'].to(device)  # shape: [batch_size, max_seq_length]
-        inputs = {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
         # 梯度清零！！
         optimizer.zero_grad()
         # 输入模型训练结果：损失及分类概率
@@ -93,15 +91,14 @@ def evaluate(model, eval_loader, device):
     for idx, batch in enumerate(eval_loader):
         with torch.no_grad():
             input_ids = batch['input_ids'].to(device)
-            token_type_ids = batch['token_type_ids'].to(device)
             attention_mask = batch['attention_mask'].to(device)
             labels = batch['labels_ids'].to(device)
-            outputs = model(input_ids, token_type_ids=token_type_ids, attention_mask=attention_mask, labels=labels)
+            outputs = model(input_ids, attention_mask=attention_mask, labels=labels)
         loss = outputs.loss
         logits = outputs[1]
 
         total_loss_eval += loss.item()
-        total_acc_eval += (logits.argmax(dim=1).data == labels.data).float().mean().item()
+        total_acc_eval += (logits.argmax(dim=2).data == labels.data).float().mean().item()
     # 计算一个epoch在训练集上的损失和精度
     val_accuracy = total_acc_eval / total_iter_eval
     val_loss = total_loss_eval / total_iter_eval
@@ -158,8 +155,8 @@ def main():
     dev_dataloader = DataLoader(dataset=dev_dataset, num_workers=4, batch_size=1, collate_fn=data_collator)
 
     # 定义优化器
-    optimizer_SGD = SGD(model_bert.parameters(), lr=arg.lr)  # SGD
-    optimizer_AdamW = AdamW(model_bert.parameters(), lr=arg.lr, eps=1e-6)  # AdamW
+    optimizer_SGD = SGD(model_bert_crf.parameters(), lr=arg.lr)  # SGD
+    optimizer_AdamW = AdamW(model_bert_crf.parameters(), lr=arg.lr, eps=1e-6)  # AdamW
     # 交叉熵损失函数
     criterion = torch.nn.CrossEntropyLoss(ignore_index=100)
 
@@ -171,7 +168,7 @@ def main():
 
     print('Start Train...,')
     for epoch in range(1, arg.epochs + 1):
-        train(model_bert, train_dataloader, optimizer_AdamW, scheduler, device)
+        train(model_bert_crf, train_dataloader, optimizer_AdamW, scheduler, device)
         print(f"=========eval at epoch={epoch}=========")
         # eval(model_bert_crf, dev_dataloader, device)
 

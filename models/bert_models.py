@@ -31,7 +31,7 @@ class BertCrfNer(BertPreTrainedModel):
         logits = self.classifier(sequence_output)
         outputs = (logits,)
         if labels is not None:
-            loss = self.crf(emissions=logits, tags=labels, mask=attention_mask.byte()) * (-1)
+            loss = self.crf(emissions=logits, tags=labels) * (-1)
             outputs = (loss,) + outputs
         return outputs  # (loss), scores
 
