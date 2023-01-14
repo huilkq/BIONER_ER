@@ -1,31 +1,19 @@
 import os
 from typing import List, Optional, Dict
 
-import numpy as np
 import torch
 import logging
 
 from filelock import FileLock
-from torch.utils.data import DataLoader, Dataset, TensorDataset
+from torch.utils.data import DataLoader, Dataset
 from tqdm import tqdm
-from transformers import BertTokenizerFast, AutoTokenizer, BertTokenizer, PreTrainedTokenizer, \
-    BertForTokenClassification
+from transformers import AutoTokenizer,  PreTrainedTokenizer
 
-from BIONER_ER.config.model_config import model_checkpoint, FILE_NAME, MODEL_BIOBERT
-from BIONER_ER.processors.data_loader import BioNERProcessor, Split,  InputFeatures, get_labels, InputExample
+from BIONER_ER.config import model_config, config
+from BIONER_ER.processors.data_loader import BioNERProcessor,  InputFeatures, InputExample
 
 logger = logging.getLogger()
 processors = BioNERProcessor()
-
-"""加载数据集和分词器"""
-# datasets = load_dataset("conll2003")
-tokenizer = AutoTokenizer.from_pretrained(MODEL_BIOBERT)
-lables = ["O", "B-Chemical", "I-Chemical"]
-
-# labels_to_ids = {k: v for v, k in enumerate(sorted(label_list))}
-# ids_to_labels = {v: k for v, k in enumerate(sorted(label_list))}
-# print(labels_to_ids)
-
 
 # 把数据集转换成bert需要的格式
 def convert_examples_to_features(
@@ -35,7 +23,7 @@ def convert_examples_to_features(
         tokenizer: PreTrainedTokenizer,
         cls_token_at_end=False,
         cls_token="[CLS]",
-        cls_token_segment_id=1,
+        cls_token_segment_id=0,
         sep_token="[SEP]",
         sep_token_extra=False,
         pad_on_left=False,
@@ -44,7 +32,7 @@ def convert_examples_to_features(
         pad_token_label_id=-100,
         sequence_a_segment_id=0,
         mask_padding_with_zero=True,
-):
+) -> List[InputFeatures]:
     """
     :param examples: InputExample的实例对像
     :param label_list: 标签列表
@@ -67,13 +55,13 @@ def convert_examples_to_features(
         tokens = []
         label_ids = []
         for word, label in zip(example.words, example.labels):
-            word_tokens = tokenizer.tokenize(word, return_tensors="pt")
+            word_tokens = tokenizer.tokenize(word)
 
             # bert-base-multilingual-cased sometimes output "nothing ([]) when calling tokenize with just a space.
             if len(word_tokens) > 0:
                 tokens.extend(word_tokens)
-                # Use the real label id for the first token of the word, and padding ids for the remaining tokens
-                label_ids.extend([label_map[label]] + [pad_token_label_id] * (len(word_tokens) - 1))
+                # 对单词的第一个标记使用实际标签id，对其余的使用标记填充id
+                label_ids.extend([label_map[label]] + [label_map[label]] * (len(word_tokens) - 1))
 
         # Account for [CLS] and [SEP] with "- 2" and with "- 3" for RoBERTa.
         special_tokens_count = tokenizer.num_special_tokens_to_add()
@@ -142,7 +130,6 @@ def convert_examples_to_features(
 
         if "token_type_ids" not in tokenizer.model_input_names:
             segment_ids = None
-
         # 以InputFeatures对象存储example
         features.append(
             InputFeatures(
@@ -215,12 +202,6 @@ class BioDataset(Dataset):
         #     "token_type_ids": torch.tensor([features.token_type_ids], dtype=torch.long),
         #     "label_ids": torch.tensor([features.label_ids], dtype=torch.long)
         # }
-        # datasets = {
-        #     "input_ids ": torch.tensor([f.input_ids for f in features], dtype=torch.long),
-        #     "attention_mask": torch.tensor([f.attention_mask for f in features], dtype=torch.long),
-        #     "token_type_ids": torch.tensor([f.token_type_ids for f in features], dtype=torch.long),
-        #     "label_ids": torch.tensor([f.label_ids for f in features], dtype=torch.long)
-        # }
         return features
 
 
@@ -238,22 +219,26 @@ def data_collator(features: List[InputFeatures]) -> Dict[str, torch.Tensor]:
 
 # 開始訓練
 if __name__ == "__main__":
-    device = torch.device("cuda")
+    """加载数据集和分词器"""
+    # datasets = load_dataset("conll2003")
+    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_BIOBERT)
     train_datasets = BioDataset(
-        data_dir=FILE_NAME,
+        data_dir=model_config.FILE_NAME,
         tokenizer=tokenizer,
-        labels=lables,
-        max_seq_length=256,
+        labels=config.labels,
+        max_seq_length=config.max_seq_length,
         data_type='train'
     )
-    # print(train_datasets)
-    model_bert = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
-    train_dataloader = DataLoader(dataset=train_datasets, num_workers=4,  batch_size=1, shuffle=True, collate_fn=data_collator)
-    for i, train_data in enumerate(train_dataloader):
-        train_label = train_data['label_ids']
-        mask = train_data['attention_mask']
-        input_id = train_data['input_ids']
-        outputs = model_bert(input_id, attention_mask=mask, labels=train_label)
-        loss = outputs.loss
-        logits = outputs[1]
-        print(input_id.shape, input_id, logits.shape)
+    print(train_datasets[6].input_ids)
+    print(train_datasets[6].label_ids)
+    print(train_datasets[6].attention_mask)
+    print(train_datasets[6].token_type_ids)
+    print(tokenizer.convert_ids_to_tokens(train_datasets[6].input_ids))
+    # model_bert = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
+    # train_dataloader = DataLoader(dataset=train_datasets, num_workers=4,  batch_size=10, shuffle=True,
+    #                               collate_fn=data_collator)
+    # for i, train_data in enumerate(train_dataloader):
+    #     train_label = train_data['label_ids']
+    #     mask = train_data['attention_mask']
+    #     input_id = train_data['input_ids']
+    #     print(input_id.shape,  mask.shape, train_label.shape)

@@ -72,8 +72,16 @@ class Split(Enum):
 class DataProcessor(object):
     """Base class for data converters for sequence classification data sets."""
 
-    def get_examples(self, data_dir, mode):
-        """Gets a collection of `InputExample`s for the train set."""
+    def get_train_examples(self, data_dir):
+        """See base class."""
+        raise NotImplementedError()
+
+    def get_dev_examples(self, data_dir):
+        """See base class."""
+        raise NotImplementedError()
+
+    def get_test_examples(self, data_dir):
+        """See base class."""
         raise NotImplementedError()
 
     def get_labels(self):
