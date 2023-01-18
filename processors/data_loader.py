@@ -191,14 +191,4 @@ class BioNERProcessor(DataProcessor):
         return examples
 
 
-def get_labels(path: str) -> List[str]:
-    if path:
-        with open(path, "r") as f:
-            labels = f.read().splitlines()
-            labels = [i+'-bio' if i != 'O' else 'O' for i in labels]
-        if "O" not in labels:
-            labels = ["O"] + labels
-        return labels
-    else:
-        # return ["O", "B-MISC", "I-MISC", "B-PER", "I-PER", "B-ORG", "I-ORG", "B-LOC", "I-LOC"]
-        return ["O", "B-bio", "I-bio"]
+

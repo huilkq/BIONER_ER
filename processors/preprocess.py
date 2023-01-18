@@ -1,6 +1,7 @@
 import os
 from typing import List, Optional, Dict
 
+import evaluate
 import torch
 import logging
 
@@ -61,7 +62,7 @@ def convert_examples_to_features(
             if len(word_tokens) > 0:
                 tokens.extend(word_tokens)
                 # 对单词的第一个标记使用实际标签id，对其余的使用标记填充id
-                label_ids.extend([label_map[label]] + [label_map[label]] * (len(word_tokens) - 1))
+                label_ids.extend([label_map[label]] + [pad_token_label_id] * (len(word_tokens) - 1))
 
         # Account for [CLS] and [SEP] with "- 2" and with "- 3" for RoBERTa.
         special_tokens_count = tokenizer.num_special_tokens_to_add()
@@ -225,15 +226,21 @@ if __name__ == "__main__":
     train_datasets = BioDataset(
         data_dir=model_config.FILE_NAME,
         tokenizer=tokenizer,
-        labels=config.labels,
+        labels=config.labels_JNLPBA,
         max_seq_length=config.max_seq_length,
         data_type='train'
     )
-    print(train_datasets[6].input_ids)
-    print(train_datasets[6].label_ids)
-    print(train_datasets[6].attention_mask)
-    print(train_datasets[6].token_type_ids)
-    print(tokenizer.convert_ids_to_tokens(train_datasets[6].input_ids))
+    label_ids = []
+    for idx, label in enumerate(train_datasets[2].label_ids):
+        if label >= 0:
+            label_ids.extend([config.ids_to_labels[label]])
+    print(config.ids_to_labels)
+    print(train_datasets[2].input_ids)
+    print(train_datasets[2].label_ids)
+    print(label_ids)
+    print(train_datasets[2].attention_mask)
+    print(train_datasets[2].token_type_ids)
+    print(tokenizer.convert_ids_to_tokens(train_datasets[2].input_ids))
     # model_bert = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
     # train_dataloader = DataLoader(dataset=train_datasets, num_workers=4,  batch_size=10, shuffle=True,
     #                               collate_fn=data_collator)
