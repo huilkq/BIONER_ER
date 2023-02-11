@@ -1,8 +1,7 @@
 import torch
-from torch import device
 
-epochs = 100  # 训练轮次
-batch_size = 12  # 每次取的大小
+epochs = 50  # 训练轮次
+batch_size = 32  # 每次取的大小
 lr = 5e-5  # bert学习率
 crf_lr = 3e-2  # 条件随机场学习率
 warm_up_ratio = 0.1  # 预热学习率

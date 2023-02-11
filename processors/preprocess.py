@@ -241,11 +241,3 @@ if __name__ == "__main__":
     print(train_datasets[2].attention_mask)
     print(train_datasets[2].token_type_ids)
     print(tokenizer.convert_ids_to_tokens(train_datasets[2].input_ids))
-    # model_bert = BertForTokenClassification.from_pretrained(MODEL_BIOBERT)
-    # train_dataloader = DataLoader(dataset=train_datasets, num_workers=4,  batch_size=10, shuffle=True,
-    #                               collate_fn=data_collator)
-    # for i, train_data in enumerate(train_dataloader):
-    #     train_label = train_data['label_ids']
-    #     mask = train_data['attention_mask']
-    #     input_id = train_data['input_ids']
-    #     print(input_id.shape,  mask.shape, train_label.shape)

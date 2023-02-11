@@ -1,5 +1,6 @@
 import os
 import torch
+from tqdm import tqdm
 
 import config
 from torch.optim import SGD, AdamW
@@ -26,7 +27,6 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
     """
     # 训练模型
     model.train()
-    # total_acc_train = 0
     total_loss_train = 0
     total_pre_train = 0
     total_accuracy_train = 0
@@ -34,7 +34,7 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
     total_f1_train = 0
     total_iter_train = len(train_loader)
     # 按批量循环训练模型
-    for idx, batch in enumerate(train_loader):
+    for idx, batch in enumerate(tqdm(train_loader)):
         # 从train_data中获取mask和input_id
         input_ids = batch['input_ids'].to(device)  # shape: [batch_size, max_seq_length]
         attention_mask = batch['attention_mask'].to(device)  # shape: [batch_size, max_seq_length]
@@ -53,11 +53,7 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
         predictions = logits_clean.argmax(dim=1)  # shape:[batch_size*max_seq_length]
         result = metrics(predictions, label_clean)
         # 计算准确率
-        # acc = (predictions == label_clean).float().mean()
-        # if idx % 50 == 0:  # 看模型的准确率
-        #     with torch.no_grad():
-        #         # 假如输入的是64个字符，64 * 7
-        #         print((predictions == label_clean).float().mean().item(), loss.item())
+        acc = (predictions == label_clean).float().mean()
         total_pre_train += result["precision"]
         total_recall_train += result["recall"]
         total_accuracy_train += result["accuracy"]
@@ -71,12 +67,8 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
         # 参数更新
         optimizer.step()
         scheduler.step()
-        # if ((idx+1) % 200 == 0):
-        #     print("iter_num: %d, loss: %.4f, Accuracy：%.4f%% 进度：%.4f%%" % (
-        #         idx, loss.item(), (total_acc_train / idx) * 100, idx / total_iter_train * 100))
 
     # 计算一个epoch在训练集上的损失和精度
-    # train_acc = total_acc_train / total_iter_train
     train_accuracy = total_accuracy_train / total_iter_train
     train_pre = total_pre_train / total_iter_train
     train_recall = total_recall_train / total_iter_train
@@ -103,7 +95,6 @@ def bioner_evaluate(model, eval_loader, device):
     :return:
     """
     model.eval()
-    # total_acc_eval = 0
     total_loss_eval = 0
     total_pre_eval = 0
     total_accuracy_eval = 0
@@ -131,9 +122,7 @@ def bioner_evaluate(model, eval_loader, device):
         total_accuracy_eval += result["accuracy"]
         total_f1_eval += result["f1"]
         total_loss_eval += loss.item()
-        # total_acc_eval += acc
     # 计算一个epoch在验证集上的损失和精度
-    # val_acc = total_acc_eval / total_iter_eval
     val_accuracy = total_accuracy_eval / total_iter_eval
     val_pre = total_pre_eval / total_iter_eval
     val_recall = total_recall_eval / total_iter_eval
@@ -163,7 +152,7 @@ def metrics(predictions, labels):
         "f1": f1_score(label_list, pre_list),
     }
 
-
+# 保存模型
 def save_pretrained(model, path):
     # 保存模型，先利用os模块创建文件夹，后利用torch.save()写入模型文件
     os.makedirs(path, exist_ok=True)
@@ -172,39 +161,39 @@ def save_pretrained(model, path):
 
 def main():
     # 标签+
-    label_map: Dict[int, str] = {i: label for i, label in enumerate(config.labels)}
+    label_map: Dict[int, str] = {i: label for i, label in enumerate(config.labels_JNLPBA)}
     # 参数
     bert_config = AutoConfig.from_pretrained(
-        model_config.MODE_BIOBERT,
-        num_labels=len(config.labels),
+        model_config.MODE_PUBMEBERT,
+        num_labels=len(config.labels_JNLPBA),
         id2label=label_map,
-        label2id={label: i for i, label in enumerate(config.labels)},
+        label2id={label: i for i, label in enumerate(config.labels_JNLPBA)},
     )
     # 分词器
-    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_BIOBERT)
+    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_PUBMEBERT)
     # 模型
-    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_BIOBERT,
+    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_PUBMEBERT,
                                                             num_labels=len(config.labels_JNLPBA)).to(config.device)
-    # model_bert_crf = BertCrfNer.from_pretrained(model_config.MODE_BIOBERT, config=bert_config).to(config.device)
+    # model_bert_crf = BertCrfNer.from_pretrained(model_config.MODE_SCIBERT, config=bert_config).to(config.device)
 
     # 定义训练和验证集数据
     train_dataset = BioDataset(
         data_dir=model_config.FILE_NAME,
         tokenizer=tokenizer,
-        labels=config.labels,
+        labels=config.labels_JNLPBA,
         max_seq_length=config.max_seq_length,
         data_type='train'
     )
     dev_dataset = BioDataset(
         data_dir=model_config.FILE_NAME,
         tokenizer=tokenizer,
-        labels=config.labels,
+        labels=config.labels_JNLPBA,
         max_seq_length=config.max_seq_length,
         data_type='dev'
     )
     # 批量获取训练和验证集数据
-    train_dataloader = DataLoader(dataset=train_dataset, batch_size=32, shuffle=True, collate_fn=data_collator)
-    dev_dataloader = DataLoader(dataset=dev_dataset, batch_size=32, shuffle=True, collate_fn=data_collator)
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=data_collator)
+    dev_dataloader = DataLoader(dataset=dev_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=data_collator)
 
     # 定义优化器
     optimizer_SGD = SGD(model_bert.parameters(), lr=config.lr)  # SGD
@@ -221,7 +210,6 @@ def main():
     # scheduler = get_linear_schedule_with_warmup(optimizer_AdamW, num_warmup_steps=0,
     #                                             num_training_steps=total_steps)  # Default value in run_glue.py
 
-    print('Start Train...,')
     for epoch in range(1, config.epochs + 1):
         print(f"=========train at epoch={epoch}=========")
         bioner_train(model_bert, train_dataloader, optimizer_AdamW, scheduler, config.device)
