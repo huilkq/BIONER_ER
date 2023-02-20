@@ -1,17 +1,17 @@
 import os
 import torch
+from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 import config
-from torch.optim import SGD, AdamW
+from torch.optim import AdamW
 from torch.utils.data import DataLoader
 from seqeval.metrics import f1_score, accuracy_score, precision_score, recall_score
 from typing import Dict
-from transformers import AutoTokenizer, BertForTokenClassification, get_linear_schedule_with_warmup, Trainer, \
-    AutoConfig, BertTokenizerFast
+from transformers import AutoTokenizer, BertForTokenClassification, get_linear_schedule_with_warmup, AutoConfig
 
 from BIONER_ER.config import model_config, config
-from BIONER_ER.models.bert_models import BertCrfNer, Bert_NER
+from BIONER_ER.models.bert_models import BertCrfForNer
 from BIONER_ER.processors.preprocess import BioDataset, data_collator
 
 
@@ -49,16 +49,13 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
         logits_clean = logits[labels != -100]
         label_clean = labels[labels != -100]
         # 获取最大概率值
-        preds = logits.argmax(dim=2)  # shape[batch_size, max_seq_length]
         predictions = logits_clean.argmax(dim=1)  # shape:[batch_size*max_seq_length]
         result = metrics(predictions, label_clean)
         # 计算准确率
-        acc = (predictions == label_clean).float().mean()
         total_pre_train += result["precision"]
         total_recall_train += result["recall"]
         total_accuracy_train += result["accuracy"]
         total_f1_train += result["f1"]
-        # total_acc_train += acc
         total_loss_train += loss.item()
         # 反向传播，累加梯度
         loss.backward()
@@ -76,6 +73,10 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
     train_loss = total_loss_train / total_iter_train
     print(
         f'''Loss:{train_loss: .4f} | Accuracy: {train_accuracy: .4f} | Precision:{train_pre: .4f} | Recall:{train_recall: .4f} | F1:{train_f1: .4f} ''')
+    return {
+        "loss": train_loss,
+        "f1": train_f1
+    }
 
 
 """
@@ -94,13 +95,13 @@ def bioner_evaluate(model, eval_loader, device):
     :param device: 设备：cpu&&gpu
     :return:
     """
-    model.eval()
     total_loss_eval = 0
     total_pre_eval = 0
     total_accuracy_eval = 0
     total_recall_eval = 0
     total_f1_eval = 0
     total_iter_eval = len(eval_loader)
+    model.eval()
     for idx, batch in enumerate(eval_loader):
         with torch.no_grad():
             input_ids = batch['input_ids'].to(device)
@@ -130,7 +131,12 @@ def bioner_evaluate(model, eval_loader, device):
 
     val_loss = total_loss_eval / total_iter_eval
     # print("Accuracy testing: %.4f" % val_acc)
-    print(f'''Loss:{val_loss: .4f} | Accuracy:{val_accuracy: .4f} | Precision:{val_pre: .4f} | Recall:{val_recall: .4f} | F1:{val_f1: .4f} ''')
+    print(
+        f'''Loss:{val_loss: .4f} | Accuracy:{val_accuracy: .4f} | Precision:{val_pre: .4f} | Recall:{val_recall: .4f} | F1:{val_f1: .4f} ''')
+    return {
+        "loss": val_loss,
+        "f1": val_f1
+    }
 
 
 # 评估指标
@@ -152,6 +158,7 @@ def metrics(predictions, labels):
         "f1": f1_score(label_list, pre_list),
     }
 
+
 # 保存模型
 def save_pretrained(model, path):
     # 保存模型，先利用os模块创建文件夹，后利用torch.save()写入模型文件
@@ -161,61 +168,108 @@ def save_pretrained(model, path):
 
 def main():
     # 标签+
-    label_map: Dict[int, str] = {i: label for i, label in enumerate(config.labels_JNLPBA)}
+    label_map: Dict[int, str] = {i: label for i, label in enumerate(config.labels)}
     # 参数
     bert_config = AutoConfig.from_pretrained(
-        model_config.MODE_PUBMEBERT,
-        num_labels=len(config.labels_JNLPBA),
+        model_config.MODE_BIOBERT,
+        num_labels=len(config.labels),
         id2label=label_map,
-        label2id={label: i for i, label in enumerate(config.labels_JNLPBA)},
+        label2id={label: i for i, label in enumerate(config.labels)},
     )
     # 分词器
-    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_PUBMEBERT)
+    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_BIOBERT)
     # 模型
-    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_PUBMEBERT,
-                                                            num_labels=len(config.labels_JNLPBA)).to(config.device)
-    # model_bert_crf = BertCrfNer.from_pretrained(model_config.MODE_SCIBERT, config=bert_config).to(config.device)
+    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_BIOBERT,
+                                                            num_labels=len(config.labels)).to(config.device)
+    model_bert_crf = BertCrfForNer.from_pretrained(model_config.MODE_BIOBERT, config=bert_config).to(config.device)
 
     # 定义训练和验证集数据
     train_dataset = BioDataset(
         data_dir=model_config.FILE_NAME,
         tokenizer=tokenizer,
-        labels=config.labels_JNLPBA,
+        labels=config.labels,
         max_seq_length=config.max_seq_length,
         data_type='train'
     )
     dev_dataset = BioDataset(
         data_dir=model_config.FILE_NAME,
         tokenizer=tokenizer,
-        labels=config.labels_JNLPBA,
+        labels=config.labels,
         max_seq_length=config.max_seq_length,
         data_type='dev'
     )
     # 批量获取训练和验证集数据
-    train_dataloader = DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=data_collator)
-    dev_dataloader = DataLoader(dataset=dev_dataset, batch_size=config.batch_size, shuffle=True, collate_fn=data_collator)
+    train_dataloader = DataLoader(dataset=train_dataset, batch_size=config.batch_size, shuffle=True,
+                                  collate_fn=data_collator)
+    dev_dataloader = DataLoader(dataset=dev_dataset, batch_size=config.batch_size, shuffle=True,
+                                collate_fn=data_collator)
 
-    # 定义优化器
-    optimizer_SGD = SGD(model_bert.parameters(), lr=config.lr)  # SGD
-    optimizer_AdamW = AdamW(model_bert.parameters(), lr=config.lr)  # AdamW
     # 交叉熵损失函数
     criterion = torch.nn.CrossEntropyLoss(ignore_index=-100)
+    # 定义优化器
+    if config.model_type == "bert":
+        optimizer = AdamW(model_bert.parameters(), lr=config.lr, weight_decay=config.weight_decay)  # AdamW
+    else:
+        #  BERT+CRF学习率
+        no_decay = ["bias", "LayerNorm.weight"]
+        bert_param_optimizer = list(model_bert_crf.bert.named_parameters())
+        crf_param_optimizer = list(model_bert_crf.crf.named_parameters())
+        linear_param_optimizer = list(model_bert_crf.classifier.named_parameters())
+        optimizer_grouped_parameters = [
+            {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
+             'weight_decay': config.weight_decay, 'lr': config.lr},
+            {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0,
+             'lr': config.lr},
+
+            {'params': [p for n, p in crf_param_optimizer if not any(nd in n for nd in no_decay)],
+             'weight_decay': config.weight_decay, 'lr': config.crf_lr},
+            {'params': [p for n, p in crf_param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0,
+             'lr': config.crf_lr},
+
+            {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
+             'weight_decay': config.weight_decay, 'lr': config.crf_lr},
+            {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0,
+             'lr': config.crf_lr}
+        ]
+        optimizer = AdamW(optimizer_grouped_parameters, lr=config.lr)  # AdamW
 
     #  Warmup学习率预热
     len_dataset = len(train_dataset)
-    total_steps = (len_dataset // config.batch_size) * config.epochs
-    scheduler = get_linear_schedule_with_warmup(optimizer_AdamW, num_warmup_steps=config.warm_up_ratio * total_steps,
+    total_steps = (len_dataset // config.batch_size) * config.epochs if len_dataset % config.batch_size == 0 \
+        else (len_dataset // config.batch_size + 1) * config.epochs
+    scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=config.warm_up_ratio * total_steps,
                                                 num_training_steps=total_steps)
-    # total_steps = len(train_dataset) * 1
-    # scheduler = get_linear_schedule_with_warmup(optimizer_AdamW, num_warmup_steps=0,
-    #                                             num_training_steps=total_steps)  # Default value in run_glue.py
 
+    train_loss_all = []
+    train_f1_all = []
+    val_loss_all = []
+    val_f1_all = []
+    epochs = []
     for epoch in range(1, config.epochs + 1):
         print(f"=========train at epoch={epoch}=========")
-        bioner_train(model_bert, train_dataloader, optimizer_AdamW, scheduler, config.device)
+        train_process = bioner_train(model_bert, train_dataloader, optimizer, scheduler, config.device)
         print(f"=========eval at epoch={epoch}=========")
-        bioner_evaluate(model_bert, dev_dataloader, config.device)
-        # print("accuracy  precision  recall  f1  loss")
+        evaluate_process = bioner_evaluate(model_bert, dev_dataloader, config.device)
+        train_loss_all.append(train_process["loss"])
+        train_f1_all.append(train_process["f1"])
+        val_loss_all.append(evaluate_process["loss"])
+        val_f1_all.append(evaluate_process["f1"])
+        epochs.append(epoch)
+    # 可视化训练过程中
+    plt.Figure(figsize=(6, 10))
+    plt.subplot(1, 2, 1)
+    plt.plot(epochs, train_loss_all, "r", label="Train loss")
+    plt.plot(epochs, val_loss_all, "b", label="Val loss")
+    plt.legend()
+    plt.xlabel("epoch")
+    plt.ylabel("Loss")
+    plt.subplot(1, 2, 2)
+    plt.plot(epochs, train_f1_all, "r", label="Train f1")
+    plt.plot(epochs, val_f1_all, "b", label="Val f1")
+    plt.legend()
+    plt.xlabel("epoch")
+    plt.ylabel("F1")
+    plt.show()
 
 
 if __name__ == "__main__":

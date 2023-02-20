@@ -1,20 +1,18 @@
 import os
 from typing import List, Optional, Dict
 
-import evaluate
 import torch
 import logging
 
 from filelock import FileLock
-from torch.utils.data import DataLoader, Dataset
-from tqdm import tqdm
-from transformers import AutoTokenizer,  PreTrainedTokenizer
+from torch.utils.data import Dataset
+from transformers import PreTrainedTokenizer
 
-from BIONER_ER.config import model_config, config
 from BIONER_ER.processors.data_loader import BioNERProcessor,  InputFeatures, InputExample
 
 logger = logging.getLogger()
 processors = BioNERProcessor()
+
 
 # 把数据集转换成bert需要的格式
 def convert_examples_to_features(
@@ -216,28 +214,3 @@ def data_collator(features: List[InputFeatures]) -> Dict[str, torch.Tensor]:
         else:
             batch[k] = torch.tensor([f.__dict__[k] for f in features], dtype=torch.long)
     return batch
-
-
-# 開始訓練
-if __name__ == "__main__":
-    """加载数据集和分词器"""
-    # datasets = load_dataset("conll2003")
-    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_BIOBERT)
-    train_datasets = BioDataset(
-        data_dir=model_config.FILE_NAME,
-        tokenizer=tokenizer,
-        labels=config.labels_JNLPBA,
-        max_seq_length=config.max_seq_length,
-        data_type='train'
-    )
-    label_ids = []
-    for idx, label in enumerate(train_datasets[2].label_ids):
-        if label >= 0:
-            label_ids.extend([config.ids_to_labels[label]])
-    print(config.ids_to_labels)
-    print(train_datasets[2].input_ids)
-    print(train_datasets[2].label_ids)
-    print(label_ids)
-    print(train_datasets[2].attention_mask)
-    print(train_datasets[2].token_type_ids)
-    print(tokenizer.convert_ids_to_tokens(train_datasets[2].input_ids))
