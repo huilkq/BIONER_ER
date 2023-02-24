@@ -1,70 +1,5 @@
 import csv
 import json
-import os
-from dataclasses import dataclass
-from enum import Enum
-from typing import Optional, List
-
-
-@dataclass
-class InputExample:
-    """
-    A single training/test example for token classification.
-
-    Args:
-        guid: Unique id for the example.
-        words: list. The words of the sequence.
-        labels: (Optional) list. The labels for each word of the sequence. This should be
-        specified for train and dev examples, but not for test examples.
-    """
-
-    guid: str
-    words: List[str]
-    labels: Optional[List[str]]
-    # def __init__(self, guid, words, labels=None):
-    #     self.guid = guid
-    #     self.words = words
-    #     self.labels = labels
-    #
-    # def __repr__(self):
-    #     return str(self.to_dict())
-    #
-    # def to_dict(self):
-    #     """Serializes this instance to a Python dictionary."""
-    #     output = copy.deepcopy(self.__dict__)
-    #     return output
-
-
-@dataclass
-class InputFeatures:
-    """
-    A single set of features of data.
-    Property names are the same names as the corresponding inputs to a model.
-    """
-
-    input_ids: List[int]
-    attention_mask: List[int]
-    token_type_ids: Optional[List[int]] = None
-    label_ids: Optional[List[int]] = None
-    # def __init__(self,  input_ids, attention_mask, token_type_ids, label_ids):
-    #     self.input_ids = input_ids
-    #     self.attention_mask = attention_mask
-    #     self.token_type_ids = token_type_ids
-    #     self.label_ids = label_ids
-    #
-    # def __repr__(self):
-    #     return str(self.to_dict())
-    #
-    # def to_dict(self):
-    #     """Serializes this instance to a Python dictionary."""
-    #     output = copy.deepcopy(self.__dict__)
-    #     return output
-
-
-class Split(Enum):
-    train = "train"
-    dev = "devel"
-    test = "test"
 
 
 # 读取本地数据集
@@ -158,36 +93,5 @@ class DataProcessor(object):
                                     labels[start_index + 1:end_index + 1] = ['I-' + key] * (len(sub_name) - 1)
                 lines.append({"words": words, "labels": labels})
         return lines
-
-
-class BioNERProcessor(DataProcessor):
-    """Processor for the chinese ner data set."""
-
-    def get_train_examples(self, data_dir):
-        """See base class."""
-        return self.create_examples(self.read_tsv(os.path.join(data_dir, "train.tsv")))
-
-    def get_dev_examples(self, data_dir):
-        """See base class."""
-        return self.create_examples(self.read_tsv(os.path.join(data_dir, "devel.tsv")))
-
-    def get_test_examples(self, data_dir):
-        """See base class."""
-        return self.create_examples(self.read_tsv(os.path.join(data_dir, "test.tsv")))
-
-    def get_labels(self):
-        """See base class."""
-        return ["O", "CONT", "ORG", "LOC", 'EDU', 'NAME', 'PRO', 'RACE', 'TITLE']
-
-    def create_examples(self, lines):
-        """Creates examples for the training and dev sets."""
-        examples = []
-        for (i, line) in enumerate(lines):
-            guid = i
-            words = line["words"]
-            labels = line["labels"]
-            examples.append(InputExample(guid=guid, words=words, labels=labels))
-        return examples
-
 
 

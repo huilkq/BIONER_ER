@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import torch
 from matplotlib import pyplot as plt
+from seqeval.metrics import precision_score, recall_score, f1_score
 from torch.optim import AdamW
 from tqdm import tqdm
 
@@ -12,9 +13,8 @@ from torch.utils.data import DataLoader, RandomSampler, SequentialSampler
 from typing import Dict
 from transformers import AutoTokenizer, BertForTokenClassification, get_linear_schedule_with_warmup, AutoConfig
 
-from BIONER_ER.bioner_metrics import SeqEntityScore
 from BIONER_ER.config import model_config, config
-from BIONER_ER.models.bert_models import BertCRF, BertBiLSTMCRF
+from BIONER_ER.models.bert_models import BertCRF, BertBiLSTMCRF, BertSoftmax
 from BIONER_ER.processors.preprocess import load_and_cache_examples, collate_fn, data_collator
 
 
@@ -29,7 +29,6 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
     :return
     """
     # 训练模型
-    metric = SeqEntityScore(config.ids_to_labels, markup='bio')
     model.train()
     total_loss_train, total_pre_train, total_recall_train, total_f1_train = 0, 0, 0, 0
     # 按批量循环训练模型
@@ -48,20 +47,16 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
             tags = model.crf.decode(logits, inputs['attention_mask'])
             tags = tags.squeeze(0).cpu().numpy().tolist()
         out_label_ids = inputs['labels'].cpu().numpy().tolist()
-        input_lens = batch[4].cpu().numpy().tolist()
+        temp_1 = []
+        temp_2 = []
         for i, label in enumerate(out_label_ids):
-            temp_1 = []
-            temp_2 = []
             for j, m in enumerate(label):
-                if j == 0:
-                    continue
-                elif j == input_lens[i] - 1:
-                    metric.update(pred_paths=[temp_2], label_paths=[temp_1])
-                    break
-                else:
-                    temp_1.append(config.ids_to_labels[out_label_ids[i][j]])
-                    temp_2.append(config.ids_to_labels[tags[i][j]])
-
+                temp_1.append(config.ids_to_labels[out_label_ids[i][j]])
+                temp_2.append(config.ids_to_labels[tags[i][j]])
+        result = metrics(temp_2, temp_1)
+        total_pre_train += result["precision"]
+        total_recall_train += result["recall"]
+        total_f1_train += result["f1"]
         total_loss_train += loss.item()
         # 反向传播，累加梯度
         loss.backward()
@@ -71,13 +66,15 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
         optimizer.step()
         scheduler.step()
         # model.zero_grad()
-    eval_info, entity_info = metric.result()
+    train_pre = total_pre_train / len(train_loader)
+    train_recall = total_recall_train / len(train_loader)
+    train_f1 = total_f1_train / len(train_loader)
     val_loss = total_loss_train / len(train_loader)
     print("train loss: {:.4f}, train Precision:{:.4f}, train Recall:{:.4f},train f1:{:.4f}"
-          .format(val_loss, eval_info["precision"], eval_info["recall"], eval_info["f1"]))
+          .format(val_loss, train_pre, train_recall, train_f1))
     return {
         "loss": val_loss,
-        "f1": eval_info["f1"]
+        "f1": train_f1
     }
 
 
@@ -97,7 +94,6 @@ def bioner_evaluate(model, eval_loader, device):
     :param device: 设备：cpu&&gpu
     :return:
     """
-    metric = SeqEntityScore(config.ids_to_labels, markup='bio')
     total_loss_eval, total_pre_eval, total_recall_eval, total_f1_eval = 0, 0, 0, 0,
     model.eval()
     for idx, batch in enumerate(eval_loader):
@@ -107,32 +103,31 @@ def bioner_evaluate(model, eval_loader, device):
             outputs = model(**inputs)
             loss, logits = outputs[:2]
         out_label_ids = inputs['labels'].cpu().numpy().tolist()
-        input_lens = batch[4].cpu().numpy().tolist()
         if config.model_type == "bert":
             tags = logits.argmax(dim=2).cpu().numpy().tolist()
         else:
             tags = model.crf.decode(logits, inputs['attention_mask'])
             tags = tags.squeeze(0).cpu().numpy().tolist()
+        temp_1 = []
+        temp_2 = []
         for i, label in enumerate(out_label_ids):
-            temp_1 = []
-            temp_2 = []
             for j, m in enumerate(label):
-                if j == 0:
-                    continue
-                elif j == input_lens[i] - 1:
-                    metric.update(pred_paths=[temp_2], label_paths=[temp_1])
-                    break
-                else:
-                    temp_1.append(config.ids_to_labels[out_label_ids[i][j]])
-                    temp_2.append(config.ids_to_labels[tags[i][j]])
+                temp_1.append(config.ids_to_labels[out_label_ids[i][j]])
+                temp_2.append(config.ids_to_labels[tags[i][j]])
+        result = metrics(temp_2, temp_1)
+        total_pre_eval += result["precision"]
+        total_recall_eval += result["recall"]
+        total_f1_eval += result["f1"]
         total_loss_eval += loss.item()
-    eval_info, entity_info = metric.result()
+    val_pre = total_pre_eval / len(eval_loader)
+    val_recall = total_recall_eval / len(eval_loader)
+    val_f1 = total_f1_eval / len(eval_loader)
     val_loss = total_loss_eval / len(eval_loader)
     print("Val loss: {:.4f}, Val Precision:{:.4f}, Val Recall:{:.4f},Val f1:{:.4f}"
-          .format(val_loss, eval_info["precision"], eval_info["recall"], eval_info["f1"]))
+          .format(val_loss, val_pre, val_recall, val_f1))
     return {
         "loss": val_loss,
-        "f1": eval_info["f1"]
+        "f1": val_f1
     }
 
 
@@ -141,6 +136,19 @@ def save_pretrained(model, path):
     # 保存模型，先利用os模块创建文件夹，后利用torch.save()写入模型文件
     os.makedirs(path, exist_ok=True)
     torch.save(model, os.path.join(path, 'model.pth'))
+
+
+# 评估指标
+def metrics(predictions, labels):
+    pre_list = []
+    label_list = []
+    pre_list.append(predictions)
+    label_list.append(labels)
+    return {
+        "precision": precision_score(label_list, pre_list),
+        "recall": recall_score(label_list, pre_list),
+        "f1": f1_score(label_list, pre_list),
+    }
 
 
 def train(train_loader, dev_loader, model, optimizer, scheduler):
@@ -160,15 +168,12 @@ def train(train_loader, dev_loader, model, optimizer, scheduler):
         val_f1_all.append(evaluate_process["f1"])
         epochs.append(epoch)
     data = {'epochs': epochs,
-            'train_loss_all': train_loss_all,
-            'val_loss_all': val_loss_all,
+            'train_loss': train_loss_all,
+            'val_loss': val_loss_all,
+            'train_f1': train_f1_all,
+            'val_f1': val_f1_all
             }
-    data2 = {'epochs': epochs,
-             'train_f1_all': train_f1_all,
-             'val_f1_all': val_f1_all
-             }
-    pd.DataFrame(data).to_csv("train_loss_data.csv")
-    pd.DataFrame(data2).to_csv("train_f1_data.csv")
+    pd.DataFrame(data).to_csv("train_data.csv")
 
 
 def main():
@@ -176,18 +181,19 @@ def main():
     label_map: Dict[int, str] = {i: label for i, label in enumerate(config.labels_JNLPBA)}
     # 参数
     bert_config = AutoConfig.from_pretrained(
-        model_config.MODE_BIOBERT,
+        model_config.MODE_SCIBERT,
         num_labels=len(config.labels_JNLPBA),
         id2label=label_map,
         label2id={label: i for i, label in enumerate(config.labels_JNLPBA)},
     )
     # 分词器
-    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_BIOBERT)
+    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_SCIBERT)
     # 模型
-    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_BIOBERT,
+    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_SCIBERT,
                                                             num_labels=len(config.labels_JNLPBA)).to(config.device)
-    model_bert_crf = BertCRF.from_pretrained(model_config.MODE_BIOBERT, config=bert_config).to(config.device)
-    model_bert_bilstm_crf = BertBiLSTMCRF.from_pretrained(model_config.MODE_BIOBERT,
+    model_bert_crf = BertCRF.from_pretrained(model_config.MODE_SCIBERT, config=bert_config).to(config.device)
+    model_bert_softmax = BertSoftmax.from_pretrained(model_config.MODE_SCIBERT, config=bert_config).to(config.device)
+    model_bert_bilstm_crf = BertBiLSTMCRF.from_pretrained(model_config.MODE_SCIBERT,
                                                           config=bert_config).to(config.device)
 
     # 定义训练和验证集数据
@@ -213,22 +219,28 @@ def main():
     dev_dataloader = DataLoader(dataset=dev_dataset, batch_size=config.batch_size, sampler=dev_sampler,
                                 collate_fn=collate_fn)
 
-    # 交叉熵损失函数
-    criterion = torch.nn.CrossEntropyLoss(ignore_index=-100)
     no_decay = ['bias', 'LayerNorm.weight']  # 控制系数不衰减的项
     # 定义优化器
     if config.model_type == "bert":
         param_optimizer = list(model_bert.named_parameters())
         optimizer_grouped_parameters = [
             {'params': [p for n, p in param_optimizer
-                        if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
+                        if not any(nd in n for nd in no_decay)], 'weight_decay': config.weight_decay},
             {'params': [p for n, p in param_optimizer
+                        if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
+        ]
+    elif config.model_type == "bert_softmax":
+        softmax_param_optimizer = list(model_bert_softmax.named_parameters())
+        optimizer_grouped_parameters = [
+            {'params': [p for n, p in softmax_param_optimizer
+                        if not any(nd in n for nd in no_decay)], 'weight_decay': config.weight_decay},
+            {'params': [p for n, p in softmax_param_optimizer
                         if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
         ]
     elif config.model_type == "bert_crf":
         # BERT+CRF
         bert_param_optimizer = list(model_bert_crf.bert.named_parameters())
-        crf_param_optimizer = list(model_bert_crf.crf.named_parameters())
+        # crf_param_optimizer = list(model_bert_crf.crf.named_parameters())
         linear_param_optimizer = list(model_bert_crf.classifier.named_parameters())
         optimizer_grouped_parameters = [
             {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
@@ -236,15 +248,17 @@ def main():
             {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)],
              'weight_decay': 0.0, 'lr': config.lr},
 
-            {'params': [p for n, p in crf_param_optimizer if not any(nd in n for nd in no_decay)],
-             'weight_decay': config.weight_decay, 'lr': config.crf_lr},
-            {'params': [p for n, p in crf_param_optimizer if any(nd in n for nd in no_decay)],
-             'weight_decay': 0.0, 'lr': config.crf_lr},
+            # {'params': [p for n, p in crf_param_optimizer if not any(nd in n for nd in no_decay)],
+            #  'weight_decay': config.weight_decay, 'lr': config.crf_lr},
+            # {'params': [p for n, p in crf_param_optimizer if any(nd in n for nd in no_decay)],
+            #  'weight_decay': 0.0, 'lr': config.crf_lr},
 
             {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
              'weight_decay': config.weight_decay, 'lr': config.crf_lr},
             {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)],
-             'weight_decay': 0.0, 'lr': config.crf_lr}
+             'weight_decay': 0.0, 'lr': config.crf_lr},
+
+            {'params': model_bert_crf.crf.parameters(), 'lr': config.crf_lr}
         ]
     else:
         # BERT_bisltm_CRF

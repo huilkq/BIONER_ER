@@ -1,4 +1,6 @@
 from collections import Counter
+
+from BIONER_ER.config import config
 from processors.utils_ner import get_entities
 
 
@@ -66,43 +68,3 @@ class SeqEntityScore(object):
             self.golds.extend(label_entities)
             self.predicts.extend(pre_entities)
             self.corrects.extend([pre_entity for pre_entity in pre_entities if pre_entity in label_entities])
-
-
-def split_entity(label_sequence):
-    entity_mark = dict()
-    entity_pointer = None
-    for index, label in enumerate(label_sequence):
-        if label.startswith('B'):
-            category = label.split('-')[1]
-            entity_pointer = (index, category)
-            entity_mark.setdefault(entity_pointer, [label])
-        elif label.startswith('I'):
-            if entity_pointer is None: continue
-            if entity_pointer[1] != label.split('-')[1]: continue
-            entity_mark[entity_pointer].append(label)
-        else:
-            entity_pointer = None
-    return entity_mark
-
-
-def evaluate(real_label, predict_label):
-    real_entity_mark = split_entity(real_label)
-    predict_entity_mark = split_entity(predict_label)
-
-    true_entity_mark = dict()
-    key_set = real_entity_mark.keys() & predict_entity_mark.keys()
-    for key in key_set:
-        real_entity = real_entity_mark.get(key)
-        predict_entity = predict_entity_mark.get(key)
-        if tuple(real_entity) == tuple(predict_entity):
-            true_entity_mark.setdefault(key, real_entity)
-
-    real_entity_num = len(real_entity_mark)
-    predict_entity_num = len(predict_entity_mark)
-    true_entity_num = len(true_entity_mark)
-
-    precision = true_entity_num / predict_entity_num
-    recall = true_entity_num / real_entity_num
-    f1 = 2 * precision * recall / (precision + recall)
-
-    return precision, recall, f1
