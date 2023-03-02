@@ -1,5 +1,6 @@
 MODE_BERT = 'bert-base-cased'
 MODE_PUBMEBERT = 'microsoft/BiomedNLP-PubMedBERT-base-uncased-abstract-fulltext'
+MODE_BLUEBERT = ''
 MODE_SCIBERT = 'allenai/scibert_scivocab_cased'
 MODE_BIOBERT = 'dmis-lab/biobert-v1.1'
 FILE_NAME = 'D:\pythonProject\BIONER_ER\datas\JNLPBA'

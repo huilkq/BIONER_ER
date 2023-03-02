@@ -14,7 +14,7 @@ from transformers import AutoTokenizer, BertForTokenClassification, get_linear_s
 
 from BIONER_ER.bioner_metrics import SeqEntityScore
 from BIONER_ER.config import model_config, config
-from BIONER_ER.models.bert_models import BertCRF, BertBiLSTMCRF
+from BIONER_ER.models.models_ner import BertCRF, BertBiLSTMCRF
 from BIONER_ER.processors.preprocess import load_and_cache_examples, collate_fn, data_collator
 
 

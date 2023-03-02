@@ -14,7 +14,7 @@ from typing import Dict
 from transformers import AutoTokenizer, BertForTokenClassification, get_linear_schedule_with_warmup, AutoConfig
 
 from BIONER_ER.config import model_config, config
-from BIONER_ER.models.bert_models import BertCRF, BertBiLSTMCRF, BertSoftmax
+from BIONER_ER.models.models_ner import BertCRF, BertBiLSTMCRF, BertSoftmax
 from BIONER_ER.processors.preprocess import load_and_cache_examples, collate_fn, data_collator
 
 
@@ -37,7 +37,7 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
         # 从train_data中获取mask和input_id
         inputs = {"input_ids": batch[0], "attention_mask": batch[1], "labels": batch[3]}
         # 梯度清零！！
-        optimizer.zero_grad()
+        # optimizer.zero_grad()
         # 输入模型训练结果：损失及分类概率
         outputs = model(**inputs)
         loss, logits = outputs[:2]  # logits.shape: [batch_size, max_seq_length, num_labels]
@@ -65,7 +65,7 @@ def bioner_train(model, train_loader, optimizer, scheduler, device):
         # 参数更新
         optimizer.step()
         scheduler.step()
-        # model.zero_grad()
+        model.zero_grad()
     train_pre = total_pre_train / len(train_loader)
     train_recall = total_recall_train / len(train_loader)
     train_f1 = total_f1_train / len(train_loader)
@@ -181,19 +181,19 @@ def main():
     label_map: Dict[int, str] = {i: label for i, label in enumerate(config.labels_JNLPBA)}
     # 参数
     bert_config = AutoConfig.from_pretrained(
-        model_config.MODE_SCIBERT,
+        model_config.MODE_BIOBERT,
         num_labels=len(config.labels_JNLPBA),
         id2label=label_map,
         label2id={label: i for i, label in enumerate(config.labels_JNLPBA)},
     )
     # 分词器
-    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_SCIBERT)
+    tokenizer = AutoTokenizer.from_pretrained(model_config.MODE_BIOBERT)
     # 模型
-    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_SCIBERT,
+    model_bert = BertForTokenClassification.from_pretrained(model_config.MODE_BIOBERT,
                                                             num_labels=len(config.labels_JNLPBA)).to(config.device)
-    model_bert_crf = BertCRF.from_pretrained(model_config.MODE_SCIBERT, config=bert_config).to(config.device)
-    model_bert_softmax = BertSoftmax.from_pretrained(model_config.MODE_SCIBERT, config=bert_config).to(config.device)
-    model_bert_bilstm_crf = BertBiLSTMCRF.from_pretrained(model_config.MODE_SCIBERT,
+    model_bert_crf = BertCRF.from_pretrained(model_config.MODE_BIOBERT, config=bert_config).to(config.device)
+    model_bert_softmax = BertSoftmax.from_pretrained(model_config.MODE_BIOBERT, config=bert_config).to(config.device)
+    model_bert_bilstm_crf = BertBiLSTMCRF.from_pretrained(model_config.MODE_BIOBERT,
                                                           config=bert_config).to(config.device)
 
     # 定义训练和验证集数据
@@ -219,7 +219,7 @@ def main():
     dev_dataloader = DataLoader(dataset=dev_dataset, batch_size=config.batch_size, sampler=dev_sampler,
                                 collate_fn=collate_fn)
 
-    no_decay = ['bias', 'LayerNorm.weight']  # 控制系数不衰减的项
+    no_decay = ['bias', 'LayerNorm.bias', 'LayerNorm.weight']  # 控制系数不衰减的项
     # 定义优化器
     if config.model_type == "bert":
         param_optimizer = list(model_bert.named_parameters())
@@ -240,7 +240,7 @@ def main():
     elif config.model_type == "bert_crf":
         # BERT+CRF
         bert_param_optimizer = list(model_bert_crf.bert.named_parameters())
-        # crf_param_optimizer = list(model_bert_crf.crf.named_parameters())
+        crf_param_optimizer = list(model_bert_crf.crf.named_parameters())
         linear_param_optimizer = list(model_bert_crf.classifier.named_parameters())
         optimizer_grouped_parameters = [
             {'params': [p for n, p in bert_param_optimizer if not any(nd in n for nd in no_decay)],
@@ -248,17 +248,15 @@ def main():
             {'params': [p for n, p in bert_param_optimizer if any(nd in n for nd in no_decay)],
              'weight_decay': 0.0, 'lr': config.lr},
 
-            # {'params': [p for n, p in crf_param_optimizer if not any(nd in n for nd in no_decay)],
-            #  'weight_decay': config.weight_decay, 'lr': config.crf_lr},
-            # {'params': [p for n, p in crf_param_optimizer if any(nd in n for nd in no_decay)],
-            #  'weight_decay': 0.0, 'lr': config.crf_lr},
+            {'params': [p for n, p in crf_param_optimizer if not any(nd in n for nd in no_decay)],
+             'weight_decay': config.weight_decay, 'lr': config.crf_lr},
+            {'params': [p for n, p in crf_param_optimizer if any(nd in n for nd in no_decay)],
+             'weight_decay': 0.0, 'lr': config.crf_lr},
 
             {'params': [p for n, p in linear_param_optimizer if not any(nd in n for nd in no_decay)],
              'weight_decay': config.weight_decay, 'lr': config.crf_lr},
             {'params': [p for n, p in linear_param_optimizer if any(nd in n for nd in no_decay)],
              'weight_decay': 0.0, 'lr': config.crf_lr},
-
-            {'params': model_bert_crf.crf.parameters(), 'lr': config.crf_lr}
         ]
     else:
         # BERT_bisltm_CRF
@@ -295,7 +293,7 @@ def main():
 
     # Train the model
     logging.info("--------Start Training!--------")
-    train(train_dataloader, dev_dataloader, model_bert, optimizer, scheduler)
+    train(train_dataloader, dev_dataloader, model_bert_crf, optimizer, scheduler)
 
 
 if __name__ == "__main__":
